@@ -25,19 +25,26 @@
     self.navigationController.navigationBar.barStyle = UIBarStyleBlack;
     self.navigationController.navigationBar.tintColor = [UIColor whiteColor];
     self.navigationController.navigationBar.titleTextAttributes = @{NSForegroundColorAttributeName: [UIColor orangeColor]};
-    
+//    
     self.navigationItem.leftBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"<-" style:UIBarButtonItemStyleDone target:self action:@selector(didTapGoToLeft)];
     self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc] initWithTitle:@"->" style:UIBarButtonItemStyleDone target:self action:@selector(didTapGoToRight)];
     
     TestTableViewController *controller1 = [[TestTableViewController alloc]initWithNibName:@"TestTableViewController" bundle:nil];
-    controller1.title = @"FRIENDS";
+    controller1.title = @"FRIENDS1";
+    TestTableViewController *controller2 = [[TestTableViewController alloc]initWithNibName:@"TestTableViewController" bundle:nil];
+    controller2.title = @"FRIENDS2";
+    TestTableViewController *controller3 = [[TestTableViewController alloc]initWithNibName:@"TestTableViewController" bundle:nil];
+    controller3.title = @"FRIENDS3";
+    TestTableViewController *controller4 = [[TestTableViewController alloc]initWithNibName:@"TestTableViewController" bundle:nil];
+    controller4.title = @"FRIENDS4";
+#if 0
     TestCollectionViewController *controller2 = [[TestCollectionViewController alloc]initWithNibName:@"TestCollectionViewController" bundle:nil];
     controller2.title = @"MOOD";
     TestViewController *controller3 = [[TestViewController alloc] initWithNibName:@"TestViewController" bundle:nil];
     controller3.title = @"MUSIC";
     TestViewController *controller4 = [[TestViewController alloc] initWithNibName:@"TestViewController" bundle:nil];
     controller4.title = @"FAVORITES";
-
+#endif
     NSArray *controllerArray = @[controller1, controller2, controller3, controller4];
     NSDictionary *parameters = @{
                                  CAPSPageMenuOptionScrollMenuBackgroundColor: [UIColor colorWithRed:30.0/255.0 green:30.0/255.0 blue:30.0/255.0 alpha:1.0],
@@ -46,8 +53,7 @@
                                  CAPSPageMenuOptionBottomMenuHairlineColor: [UIColor colorWithRed:70.0/255.0 green:70.0/255.0 blue:70.0/255.0 alpha:1.0],
                                  CAPSPageMenuOptionMenuItemFont: [UIFont fontWithName:@"HelveticaNeue" size:13.0],
                                  CAPSPageMenuOptionMenuHeight: @(40.0),
-                                 CAPSPageMenuOptionMenuItemWidth: @(90.0),
-                                 CAPSPageMenuOptionCenterMenuItems: @(YES)
+                                 CAPSPageMenuOptionMenuItemWidth: @(90.0)
                                  };
 
     _pageMenu = [[CAPSPageMenu alloc] initWithViewControllers:controllerArray frame:CGRectMake(0.0, 0.0, self.view.frame.size.width, self.view.frame.size.height) options:parameters];

@@ -31,6 +31,8 @@
 
 @interface CAPSPageMenu : UIViewController <UIScrollViewDelegate, UIGestureRecognizerDelegate>
 
+@property (nonatomic, strong) UIScrollView *functionScrollView;     // ファンクション部のScrollView
+@property (nonatomic, strong) UIView *dummyView;                    // DummyView
 @property (nonatomic, strong) UIScrollView *menuScrollView;
 @property (nonatomic, strong) UIScrollView *controllerScrollView;
 
@@ -61,8 +63,6 @@
 @property (nonatomic) BOOL menuItemSeparatorRoundEdges;
 
 @property (nonatomic) BOOL addBottomMenuHairline;
-@property (nonatomic) BOOL menuItemWidthBasedOnTitleTextWidth;
-@property (nonatomic) BOOL useMenuLikeSegmentedControl;
 @property (nonatomic) BOOL centerMenuItems;
 @property (nonatomic) BOOL enableHorizontalBounce;
 @property (nonatomic) BOOL hideTopMenuBar;
@@ -94,7 +94,6 @@ extern NSString * const CAPSPageMenuOptionEnableHorizontalBounce;
 extern NSString * const CAPSPageMenuOptionAddBottomMenuHairline;
 extern NSString * const CAPSPageMenuOptionMenuItemWidthBasedOnTitleTextWidth;
 extern NSString * const CAPSPageMenuOptionScrollAnimationDurationOnMenuItemTap;
-extern NSString * const CAPSPageMenuOptionCenterMenuItems;
 extern NSString * const CAPSPageMenuOptionHideTopMenuBar;
 
 @end

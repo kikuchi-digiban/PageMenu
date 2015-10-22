@@ -7,6 +7,7 @@
 //
 
 #import "CAPSPageMenu.h"
+#import "TestTableViewController.h"
 
 @interface MenuItemView ()
 
@@ -48,8 +49,6 @@ typedef NS_ENUM(NSUInteger, CAPSPageMenuScrollDirection) {
 @interface CAPSPageMenu ()
 
 @property (nonatomic) NSMutableArray *mutableMenuItems;
-@property (nonatomic) NSMutableArray *mutableMenuItemWidths;
-@property (nonatomic) CGFloat totalMenuItemWidthIfDifferentWidths;
 @property (nonatomic) CGFloat startingMenuMargin;
 
 @property (nonatomic) UIView *selectionIndicatorView;
@@ -65,7 +64,14 @@ typedef NS_ENUM(NSUInteger, CAPSPageMenuScrollDirection) {
 @property (nonatomic) BOOL didTapMenuItemToScroll;
 @property (nonatomic) NSMutableSet *pagesAddedSet;
 
+@property (nonatomic) CGFloat functionViewHeight;      // FunctionViewの高さ
+@property (nonatomic) CGFloat lastFunctionViewOffsetY; // ベースとなるUIScrollViewの最終スクロール位置を保持
+@property (nonatomic) NSMutableDictionary *lastContentTableViewOffsetY; // コンテンツとなるUITableViewの最終スクロール位置を保持
+@property (nonatomic) UIRefreshControl *refreshControl;
+@property (nonatomic) BOOL didPullToRefresh;
+
 @property (nonatomic) NSTimer *tapTimer;
+@property (nonatomic) NSTimer *scrollTimer;            // 中途半端な位置でスクロールが止めたときに処理をコール
 
 @end
 
@@ -82,16 +88,13 @@ NSString * const CAPSPageMenuOptionMenuMargin                           = @"menu
 NSString * const CAPSPageMenuOptionMenuHeight                           = @"menuHeight";
 NSString * const CAPSPageMenuOptionSelectedMenuItemLabelColor           = @"selectedMenuItemLabelColor";
 NSString * const CAPSPageMenuOptionUnselectedMenuItemLabelColor         = @"unselectedMenuItemLabelColor";
-NSString * const CAPSPageMenuOptionUseMenuLikeSegmentedControl          = @"useMenuLikeSegmentedControl";
 NSString * const CAPSPageMenuOptionMenuItemSeparatorRoundEdges          = @"menuItemSeparatorRoundEdges";
 NSString * const CAPSPageMenuOptionMenuItemFont                         = @"menuItemFont";
 NSString * const CAPSPageMenuOptionMenuItemSeparatorPercentageHeight    = @"menuItemSeparatorPercentageHeight";
 NSString * const CAPSPageMenuOptionMenuItemWidth                        = @"menuItemWidth";
 NSString * const CAPSPageMenuOptionEnableHorizontalBounce               = @"enableHorizontalBounce";
 NSString * const CAPSPageMenuOptionAddBottomMenuHairline                = @"addBottomMenuHairline";
-NSString * const CAPSPageMenuOptionMenuItemWidthBasedOnTitleTextWidth   = @"menuItemWidthBasedOnTitleTextWidth";
 NSString * const CAPSPageMenuOptionScrollAnimationDurationOnMenuItemTap = @"scrollAnimationDurationOnMenuItemTap";
-NSString * const CAPSPageMenuOptionCenterMenuItems                      = @"centerMenuItems";
 NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hideTopMenuBar";
 
 - (instancetype)initWithViewControllers:(NSArray *)viewControllers frame:(CGRect)frame options:(NSDictionary *)options
@@ -129,8 +132,6 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
                 _selectedMenuItemLabelColor = options[key];
             } else if ([key isEqualToString:CAPSPageMenuOptionUnselectedMenuItemLabelColor]) {
                 _unselectedMenuItemLabelColor = options[key];
-            } else if ([key isEqualToString:CAPSPageMenuOptionUseMenuLikeSegmentedControl]) {
-                _useMenuLikeSegmentedControl = [options[key] boolValue];
             } else if ([key isEqualToString:CAPSPageMenuOptionMenuItemSeparatorRoundEdges]) {
                 _menuItemSeparatorRoundEdges = [options[key] boolValue];
             } else if ([key isEqualToString:CAPSPageMenuOptionMenuItemFont]) {
@@ -143,12 +144,8 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
                 _enableHorizontalBounce = [options[key] boolValue];
             } else if ([key isEqualToString:CAPSPageMenuOptionAddBottomMenuHairline]) {
                 _addBottomMenuHairline = [options[key] boolValue];
-            } else if ([key isEqualToString:CAPSPageMenuOptionMenuItemWidthBasedOnTitleTextWidth]) {
-                _menuItemWidthBasedOnTitleTextWidth = [options[key] boolValue];
             } else if ([key isEqualToString:CAPSPageMenuOptionScrollAnimationDurationOnMenuItemTap]) {
                 _scrollAnimationDurationOnMenuItemTap = [options[key] integerValue];
-            } else if ([key isEqualToString:CAPSPageMenuOptionCenterMenuItems]) {
-                _centerMenuItems = [options[key] boolValue];
             } else if ([key isEqualToString:CAPSPageMenuOptionHideTopMenuBar]) {
                 _hideTopMenuBar = [options[key] boolValue];
             }
@@ -170,16 +167,18 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
 
 - (void)initValues
 {
+    // add
+    _dummyView            = [UIView new];
+    _functionScrollView   = [UIScrollView new];
+    
     _menuScrollView       = [UIScrollView new];
     _controllerScrollView = [UIScrollView new];
     _mutableMenuItems       = [NSMutableArray array];
-    _mutableMenuItemWidths  = [NSMutableArray array];
     
     _menuHeight                           = 34.0;
     _menuMargin                           = 15.0;
     _menuItemWidth                        = 111.0;
     _selectionIndicatorHeight             = 3.0;
-    _totalMenuItemWidthIfDifferentWidths  = 0.0;
     _scrollAnimationDurationOnMenuItemTap = 500;
     _startingMenuMargin                   = 0.0;
     
@@ -202,9 +201,6 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
     _menuItemSeparatorRoundEdges       = NO;
     
     _addBottomMenuHairline              = YES;
-    _menuItemWidthBasedOnTitleTextWidth = NO;
-    _useMenuLikeSegmentedControl        = NO;
-    _centerMenuItems                    = NO;
     _enableHorizontalBounce             = YES;
     _hideTopMenuBar                     = NO;
     
@@ -218,42 +214,66 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
     _didTapMenuItemToScroll = NO;
     
     _pagesAddedSet = [NSMutableSet set];
+
+    // add
+    _functionViewHeight = 100.0;
+    _lastFunctionViewOffsetY = 0.0;
+    _lastContentTableViewOffsetY = [NSMutableDictionary dictionaryWithCapacity:100];;
+    _didPullToRefresh = NO;
 }
 
 - (void)setUpUserInterface
 {
+#if 0 // AutoLayoutは後回し
     NSDictionary *viewsDictionary = @{
                                       @"menuScrollView" : _menuScrollView,
                                       @"controllerScrollView":_controllerScrollView
                                       };
+#endif
+    // FunctionScrollViewの設定
+    _functionScrollView.translatesAutoresizingMaskIntoConstraints = NO;
+    _functionScrollView.frame = CGRectMake(0.0, 0.0, self.view.frame.size.width, self.view.frame.size.height);
+    _functionScrollView.alwaysBounceVertical = YES;
+    [self.view addSubview:_functionScrollView];
     
+    // Refreshコントール
+    _refreshControl = [[UIRefreshControl alloc] init];
+    [_refreshControl addTarget:self action:@selector(pullToRefresh:) forControlEvents:UIControlEventValueChanged];
+    [_functionScrollView addSubview:_refreshControl];
+    
+    // DummyView
+    _dummyView.frame = CGRectMake(0.0, 0.0, self.view.frame.size.width, _functionViewHeight);
+    _dummyView.backgroundColor = [UIColor redColor];
+    [_functionScrollView addSubview:_dummyView];
+    
+    // controllerScrollViewの設定
     _controllerScrollView.pagingEnabled                             = YES;
-    _controllerScrollView.translatesAutoresizingMaskIntoConstraints = NO;
+    //_controllerScrollView.translatesAutoresizingMaskIntoConstraints = NO;
     _controllerScrollView.alwaysBounceHorizontal = _enableHorizontalBounce;
     _controllerScrollView.bounces                = _enableHorizontalBounce;
+    _controllerScrollView.frame = CGRectMake(0.0, _functionViewHeight, self.view.frame.size.width, self.view.frame.size.height - _menuHeight);
+    [_functionScrollView addSubview:_controllerScrollView];
     
-    _controllerScrollView.frame = CGRectMake(0.0, _menuHeight, self.view.frame.size.width, self.view.frame.size.height - _menuHeight);
-    
-    [self.view addSubview:_controllerScrollView];
-    
+#if 0 // AutoLayoutは後回し
     NSArray *controllerScrollView_constraint_H = [NSLayoutConstraint constraintsWithVisualFormat:@"H:|[controllerScrollView]|" options:0 metrics:nil views:viewsDictionary];
     NSString *controllerScrollView_constraint_V_Format = [NSString stringWithFormat:@"V:|-0-[controllerScrollView]|"];
     NSArray *controllerScrollView_constraint_V = [NSLayoutConstraint constraintsWithVisualFormat:controllerScrollView_constraint_V_Format options:0 metrics:nil views:viewsDictionary];
-    
     [self.view addConstraints:controllerScrollView_constraint_H];
     [self.view addConstraints:controllerScrollView_constraint_V];
+#endif
     
-    // Set up menu scroll view
-    _menuScrollView.translatesAutoresizingMaskIntoConstraints = NO;
-    _menuScrollView.frame = CGRectMake(0.0, 0.0, self.view.frame.size.width, _menuHeight);
-    [self.view addSubview:_menuScrollView];
-    
+    // menuScrollViewの設定
+    //_menuScrollView.translatesAutoresizingMaskIntoConstraints = NO;
+    _menuScrollView.frame = CGRectMake(0.0, _functionViewHeight, self.view.frame.size.width, _menuHeight);
+    [_functionScrollView addSubview:_menuScrollView];
+
+#if 0 // AutoLayoutは後回し
     NSArray *menuScrollView_constraint_H = [NSLayoutConstraint constraintsWithVisualFormat:@"H:|[menuScrollView]|" options:0 metrics:nil views:viewsDictionary];
     NSString *menuScrollView_constrant_V_Format = [NSString stringWithFormat:@"V:|[menuScrollView(%.f)]",_menuHeight];
     NSArray *menuScrollView_constraint_V = [NSLayoutConstraint constraintsWithVisualFormat:menuScrollView_constrant_V_Format options:0 metrics:nil views:viewsDictionary];
-    
     [self.view addConstraints:menuScrollView_constraint_H];
     [self.view addConstraints:menuScrollView_constraint_V];
+#endif
     
     if (_addBottomMenuHairline) {
         UIView *menuBottomHairline = [UIView new];
@@ -261,14 +281,14 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
         menuBottomHairline.translatesAutoresizingMaskIntoConstraints = NO;
         
         [self.view addSubview:menuBottomHairline];
-        
+#if 0 // AutoLayoutは後回し
         NSArray *menuBottomHairline_constraint_H = [NSLayoutConstraint constraintsWithVisualFormat:@"H:|[menuBottomHairline]|" options:0 metrics:nil views:@{@"menuBottomHairline":menuBottomHairline}];
         NSString *menuBottomHairline_constraint_V_Format = [NSString stringWithFormat:@"V:|-%f-[menuBottomHairline(0.5)]",_menuHeight];
         NSArray *menuBottomHairline_constraint_V = [NSLayoutConstraint constraintsWithVisualFormat:menuBottomHairline_constraint_V_Format options:0 metrics:nil views:@{@"menuBottomHairline":menuBottomHairline}];
         
         [self.view addConstraints:menuBottomHairline_constraint_H];
         [self.view addConstraints:menuBottomHairline_constraint_V];
-        
+#endif
         menuBottomHairline.backgroundColor = _bottomMenuHairlineColor;
     }
     
@@ -277,10 +297,13 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
     _menuScrollView.showsVerticalScrollIndicator         = NO;
     _controllerScrollView.showsHorizontalScrollIndicator = NO;
     _controllerScrollView.showsVerticalScrollIndicator   = NO;
+    _functionScrollView.showsHorizontalScrollIndicator = YES;
+    _functionScrollView.showsVerticalScrollIndicator   = YES;
     
     // Set background color behind scroll views and for menu scroll view
     self.view.backgroundColor = _viewBackgroundColor;
     _menuScrollView.backgroundColor = _scrollMenuBackgroundColor;
+    _functionScrollView.backgroundColor = [UIColor whiteColor];
 }
 
 - (void)configureUserInterface
@@ -293,6 +316,7 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
     
     // Set delegate for controller scroll view
     _controllerScrollView.delegate = self;
+    _functionScrollView.delegate   = self;
     
     // When the user taps the status bar, the scroll view beneath the touch which is closest to the status bar will be scrolled to top,
     // but only if its `scrollsToTop` property is YES, its delegate does not return NO from `shouldScrollViewScrollToTop`, and it is not already at the top.
@@ -300,17 +324,11 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
     // Disable scrollsToTop for menu and controller scroll views so that iOS finds scroll views within our pages on status bar tap gesture.
     _menuScrollView.scrollsToTop       = NO;;
     _controllerScrollView.scrollsToTop = NO;;
+    _functionScrollView.scrollsToTop   = NO;
     
-    // Configure menu scroll view
-    if (_useMenuLikeSegmentedControl) {
-        _menuScrollView.scrollEnabled = NO;;
-        _menuScrollView.contentSize = CGSizeMake(self.view.frame.size.width, _menuHeight);
-        _menuMargin = 0.0;
-    } else {
-        _menuScrollView.contentSize = CGSizeMake((_menuItemWidth + _menuMargin) * (CGFloat)_controllerArray.count + _menuMargin, _menuHeight);
-    }
-    // Configure controller scroll view content size
+    _menuScrollView.contentSize = CGSizeMake((_menuItemWidth + _menuMargin) * (CGFloat)_controllerArray.count + _menuMargin, _menuHeight);
     _controllerScrollView.contentSize = CGSizeMake(self.view.frame.size.width * (CGFloat)_controllerArray.count, 0.0);
+    _functionScrollView.contentSize = CGSizeMake(self.view.frame.size.width , self.view.frame.size.height + _functionViewHeight);
     
     CGFloat index = 0.0;
     
@@ -322,45 +340,26 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
             [controller viewDidAppear:YES];
         }
         
+        // controller(TableView)を監視する
+        // contentSize
+        TestTableViewController* contentTableView = (TestTableViewController*)controller;
+        [contentTableView.tableView addObserver:self
+                     forKeyPath:@"contentSize"
+                        options:NSKeyValueObservingOptionNew
+                        context:(__bridge void *)contentTableView.title];
+        // contentOffset
+        [contentTableView.tableView addObserver:self
+                     forKeyPath:@"contentOffset"
+                        options:NSKeyValueObservingOptionNew
+                        context:(__bridge void *)contentTableView.title];
+        
         // Set up menu item for menu scroll view
         CGRect menuItemFrame;
-        
-        if (_useMenuLikeSegmentedControl) {
-            menuItemFrame = CGRectMake(self.view.frame.size.width / (CGFloat)_controllerArray.count * (CGFloat)index, 0.0, (CGFloat)self.view.frame.size.width / (CGFloat)_controllerArray.count, _menuHeight);
-        } else if (_menuItemWidthBasedOnTitleTextWidth) {
-            NSString *controllerTitle = controller.title;
-            
-            NSString *titleText = controllerTitle != nil ? controllerTitle : [NSString stringWithFormat:@"Menu %.0f", index + 1];
-            
-            CGRect itemWidthRect = [titleText boundingRectWithSize:CGSizeMake(1000, 1000) options: NSStringDrawingUsesLineFragmentOrigin attributes: @{NSFontAttributeName:_menuItemFont} context: nil];
-            
-            _menuItemWidth = itemWidthRect.size.width;
-            
-            menuItemFrame = CGRectMake(_totalMenuItemWidthIfDifferentWidths + _menuMargin + (_menuMargin * index), 0.0, _menuItemWidth, _menuHeight);
-            
-            _totalMenuItemWidthIfDifferentWidths += itemWidthRect.size.width;
-            [_mutableMenuItemWidths addObject:@(itemWidthRect.size.width)];
-        } else {
-            if (_centerMenuItems && index == 0.0) {
-                _startingMenuMargin = ((self.view.frame.size.width - (((CGFloat)_controllerArray.count * _menuItemWidth) + (CGFloat)(_controllerArray.count - 1) * _menuMargin)) / 2.0) -  _menuMargin;
-                
-                if (_startingMenuMargin < 0.0) {
-                    _startingMenuMargin = 0.0;
-                }
-                
-                menuItemFrame = CGRectMake(_startingMenuMargin + _menuMargin, 0.0, _menuItemWidth, _menuHeight);
-            } else {
-                menuItemFrame = CGRectMake(_menuItemWidth * index + _menuMargin * (index + 1) + _startingMenuMargin, 0.0, _menuItemWidth, _menuHeight);
-            }
-        }
+        menuItemFrame = CGRectMake(_menuItemWidth * index + _menuMargin * (index + 1) + _startingMenuMargin, 0.0, _menuItemWidth, _menuHeight);
         
         MenuItemView *menuItemView = [[MenuItemView alloc] initWithFrame:menuItemFrame];
-        if (_useMenuLikeSegmentedControl) {
-            [menuItemView setUpMenuItemView:(CGFloat)self.view.frame.size.width / (CGFloat)_controllerArray.count menuScrollViewHeight:_menuHeight indicatorHeight:_selectionIndicatorHeight separatorPercentageHeight:_menuItemSeparatorPercentageHeight separatorWidth:_menuItemSeparatorWidth separatorRoundEdges:_menuItemSeparatorRoundEdges menuItemSeparatorColor:_menuItemSeparatorColor];
-            
-        } else {
-            [menuItemView setUpMenuItemView:_menuItemWidth menuScrollViewHeight:_menuHeight indicatorHeight:_selectionIndicatorHeight separatorPercentageHeight:_menuItemSeparatorPercentageHeight separatorWidth:_menuItemSeparatorWidth separatorRoundEdges:_menuItemSeparatorRoundEdges menuItemSeparatorColor:_menuItemSeparatorColor];
-        }
+        [menuItemView setUpMenuItemView:_menuItemWidth menuScrollViewHeight:_menuHeight indicatorHeight:_selectionIndicatorHeight separatorPercentageHeight:_menuItemSeparatorPercentageHeight separatorWidth:_menuItemSeparatorWidth separatorRoundEdges:_menuItemSeparatorRoundEdges menuItemSeparatorColor:_menuItemSeparatorColor];
+
         
         // Configure menu item label font if font is set by user
         menuItemView.titleLabel.font = _menuItemFont;
@@ -375,24 +374,12 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
             [menuItemView setTitleText:[NSString stringWithFormat:@"Menu %.0f",index + 1]];
         }
         
-        // Add separator between menu items when using as segmented control
-        if (_useMenuLikeSegmentedControl) {
-            if ((NSInteger)index < _controllerArray.count - 1) {
-                menuItemView.menuItemSeparator.hidden = NO;
-            }
-        }
-        
         // Add menu item view to menu scroll view
         [_menuScrollView addSubview:menuItemView];
         
         [_mutableMenuItems addObject:menuItemView];
         
         index++;
-    }
-    
-    // Set new content size for menu scroll view if needed
-    if (_menuItemWidthBasedOnTitleTextWidth) {
-        _menuScrollView.contentSize = CGSizeMake((_totalMenuItemWidthIfDifferentWidths + _menuMargin) + (CGFloat)_controllerArray.count * _menuMargin, _menuHeight);
     }
     
     // Set selected color for title label of selected menu item
@@ -404,18 +391,7 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
     
     // Configure selection indicator view
     CGRect selectionIndicatorFrame;
-    
-    if (_useMenuLikeSegmentedControl) {
-        selectionIndicatorFrame = CGRectMake(0.0, _menuHeight - _selectionIndicatorHeight, self.view.frame.size.width / (CGFloat)_controllerArray.count, _selectionIndicatorHeight);
-    } else if (_menuItemWidthBasedOnTitleTextWidth) {
-        selectionIndicatorFrame = CGRectMake(_menuMargin, _menuHeight - _selectionIndicatorHeight, [_mutableMenuItemWidths[0] floatValue], _selectionIndicatorHeight);
-    } else {
-        if (_centerMenuItems) {
-            selectionIndicatorFrame = CGRectMake(_startingMenuMargin + _menuMargin, _menuHeight - _selectionIndicatorHeight, _menuItemWidth, _selectionIndicatorHeight);
-        } else {
-            selectionIndicatorFrame = CGRectMake(_menuMargin, _menuHeight - _selectionIndicatorHeight, _menuItemWidth, _selectionIndicatorHeight);
-        }
-    }
+    selectionIndicatorFrame = CGRectMake(_menuMargin, _menuHeight - _selectionIndicatorHeight, _menuItemWidth, _selectionIndicatorHeight);
     
     _selectionIndicatorView = [[UIView alloc] initWithFrame:selectionIndicatorFrame];
     _selectionIndicatorView.backgroundColor = _selectionIndicatorColor;
@@ -425,7 +401,11 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
 #pragma mark - Scroll view delegate
 - (void)scrollViewDidScroll:(UIScrollView *)scrollView
 {
-    if (!_didLayoutSubviewsAfterRotation) {
+    if (!_didLayoutSubviewsAfterRotation) { // 1度だけ
+        if ([scrollView isEqual:_functionScrollView]) {
+            NSLog(@"functionScrollView (%f, %f)", scrollView.contentOffset.x, scrollView.contentOffset.y);
+            _lastFunctionViewOffsetY = scrollView.contentOffset.y; // 最後のスクロール位置を保持
+        }
         if ([scrollView isEqual:_controllerScrollView]) {
             if (scrollView.contentOffset.x >= 0.0 && scrollView.contentOffset.x <= ((CGFloat)(_controllerArray.count - 1) * self.view.frame.size.width)) {
                 UIInterfaceOrientation orientation = [[UIApplication sharedApplication] statusBarOrientation];
@@ -444,7 +424,6 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
                             if (newScrollDirection != CAPSPageMenuScrollDirectionOther) {
                                 if (_lastScrollDirection != newScrollDirection) {
                                     NSInteger index = newScrollDirection == CAPSPageMenuScrollDirectionLeft ? _currentPageIndex + 1 : _currentPageIndex - 1;
-                                    
                                     if (index >= 0 && index < _controllerArray.count ){
                                         // Check dictionary if page was already added
                                         if (![_pagesAddedSet containsObject:@(index)]) {
@@ -546,7 +525,6 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
                         }
                     }
                     
-                    // Move selection indicator view when swiping
                     [self moveSelectionIndicator:page];
                 }
             } else {
@@ -559,9 +537,17 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
                     offset.x = _controllerScrollView.contentOffset.x * ratio;
                     [self.menuScrollView setContentOffset:offset animated:NO];
                 }
+                
+                if ([scrollView isEqual:_functionScrollView]){
+                    NSLog(@"FunctionScrollView1");
+                }
             }
         }
     } else {
+        
+        if ([scrollView isEqual:_functionScrollView]){
+            NSLog(@"FunctionScrollView2");
+        }
         _didLayoutSubviewsAfterRotation = NO;
         
         // Move selection indicator view when swiping
@@ -591,6 +577,10 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
         // Empty out pages in dictionary
         [_pagesAddedSet removeAllObjects];
     }
+    else if ([scrollView isEqual:_functionScrollView]) {
+        NSLog(@"functionScrollView (%f, %f) STOP!", scrollView.contentOffset.x, scrollView.contentOffset.y);
+    }
+    NSLog(@"scrollViewDidEndDecelerating STOP");
 }
 
 
@@ -625,26 +615,8 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
             
             CGFloat selectionIndicatorWidth = self.selectionIndicatorView.frame.size.width;
             CGFloat selectionIndicatorX = 0.0;
-            
-            if (self.useMenuLikeSegmentedControl) {
-                selectionIndicatorX = (CGFloat)pageIndex * (self.view.frame.size.width / (CGFloat)self.controllerArray.count);
-                selectionIndicatorWidth = self.view.frame.size.width / (CGFloat)self.controllerArray.count;
-            } else if (self.menuItemWidthBasedOnTitleTextWidth) {
-                selectionIndicatorWidth = [self.menuItemWidths[pageIndex] floatValue];
-                selectionIndicatorX += self.menuMargin;
-                
-                if (pageIndex > 0) {
-                    for (NSInteger i=0; i<pageIndex; i++) {
-                        selectionIndicatorX += (self.menuMargin + [self.menuItemWidths[i] floatValue]);
-                    }
-                }
-            } else {
-                if (self.centerMenuItems && pageIndex == 0) {
-                    selectionIndicatorX = self.startingMenuMargin + self.menuMargin;
-                } else {
-                    selectionIndicatorX = self.menuItemWidth * (CGFloat)pageIndex + self.menuMargin * (CGFloat)(pageIndex + 1) + self.startingMenuMargin;
-                }
-            }
+
+            selectionIndicatorX = self.menuItemWidth * (CGFloat)pageIndex + self.menuMargin * (CGFloat)(pageIndex + 1) + self.startingMenuMargin;
             
             self.selectionIndicatorView.frame = CGRectMake(selectionIndicatorX, self.selectionIndicatorView.frame.origin.y, selectionIndicatorWidth, self.selectionIndicatorView.frame.size.height);
             
@@ -669,34 +641,14 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
         
         // Calculate tapped page
         NSInteger itemIndex = 0;
+
+        CGFloat rawItemIndex = ((tappedPoint.x - _startingMenuMargin) - _menuMargin / 2) / (_menuMargin + _menuItemWidth);
         
-        if (_useMenuLikeSegmentedControl) {
-            itemIndex = (NSInteger) (tappedPoint.x / (self.view.frame.size.width / (CGFloat)_controllerArray.count));
-        } else if (_menuItemWidthBasedOnTitleTextWidth) {
-            // Base case being first item
-            CGFloat menuItemLeftBound = 0.0;
-            CGFloat menuItemRightBound = [_mutableMenuItemWidths[0] floatValue] + _menuMargin + (_menuMargin / 2);
-            
-            if (!(tappedPoint.x >= menuItemLeftBound && tappedPoint.x <= menuItemRightBound)) {
-                for (NSInteger i = 1; i<=_controllerArray.count - 1; i++) {
-                    menuItemLeftBound = menuItemRightBound + 1.0;
-                    menuItemRightBound = menuItemLeftBound + [_mutableMenuItemWidths[i] floatValue] + _menuMargin;
-                    
-                    if (tappedPoint.x >= menuItemLeftBound && tappedPoint.x <= menuItemRightBound) {
-                        itemIndex = i;
-                        break;
-                    }
-                }
-            }
+        // Prevent moving to first item when tapping left to first item
+        if (rawItemIndex < 0) {
+            itemIndex = -1;
         } else {
-            CGFloat rawItemIndex = ((tappedPoint.x - _startingMenuMargin) - _menuMargin / 2) / (_menuMargin + _menuItemWidth);
-            
-            // Prevent moving to first item when tapping left to first item
-            if (rawItemIndex < 0) {
-                itemIndex = -1;
-            } else {
-                itemIndex = (NSInteger)rawItemIndex;
-            }
+            itemIndex = (NSInteger)rawItemIndex;
         }
         
         if (itemIndex >= 0 && itemIndex < _controllerArray.count) {
@@ -785,6 +737,8 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
     // Configure controller scroll view content size
     _controllerScrollView.contentSize = CGSizeMake(self.view.frame.size.width * (CGFloat)_controllerArray.count, self.view.frame.size.height - _menuHeight);
     
+    NSLog(@"contentSize.height = %f", _functionScrollView.contentSize.height);
+    
     BOOL oldCurrentOrientationIsPortrait = _currentOrientationIsPortrait;
     
     UIInterfaceOrientation orientation = [[UIApplication sharedApplication] statusBarOrientation];
@@ -792,53 +746,6 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
     
     if ((oldCurrentOrientationIsPortrait && UIInterfaceOrientationIsLandscape(orientation)) || (!oldCurrentOrientationIsPortrait && UIInterfaceOrientationIsPortrait(orientation))){
         _didLayoutSubviewsAfterRotation = YES;
-        
-        //Resize menu items if using as segmented control
-        if (_useMenuLikeSegmentedControl) {
-            _menuScrollView.contentSize = CGSizeMake(self.view.frame.size.width, _menuHeight);
-            
-            // Resize selectionIndicator bar
-            CGFloat selectionIndicatorX = (CGFloat)_currentPageIndex * (self.view.frame.size.width / (CGFloat)_controllerArray.count);
-            CGFloat selectionIndicatorWidth = self.view.frame.size.width / (CGFloat)_controllerArray.count;
-            _selectionIndicatorView.frame =  CGRectMake(selectionIndicatorX, self.selectionIndicatorView.frame.origin.y, selectionIndicatorWidth, self.selectionIndicatorView.frame.size.height);
-            
-            // Resize menu items
-            NSInteger index = 0;
-            
-            for (MenuItemView *item in _mutableMenuItems) {
-                item.frame = CGRectMake(self.view.frame.size.width / (CGFloat)_controllerArray.count * (CGFloat)index, 0.0, self.view.frame.size.width / (CGFloat)_controllerArray.count, _menuHeight);
-                if (item.titleLabel) {
-                    item.titleLabel.frame = CGRectMake(0.0, 0.0, self.view.frame.size.width / (CGFloat)_controllerArray.count, _menuHeight);
-                }
-                if (item.menuItemSeparator){
-                    item.menuItemSeparator.frame = CGRectMake(item.frame.size.width - (_menuItemSeparatorWidth / 2), item.menuItemSeparator.frame.origin.y, item.menuItemSeparator.frame.size.width, item.menuItemSeparator.frame.size.height);
-                }
-                
-                index++;
-            }
-        } else if (_centerMenuItems) {
-            _startingMenuMargin = ((self.view.frame.size.width - (((CGFloat)_controllerArray.count * _menuItemWidth) + ((CGFloat)(_controllerArray.count - 1) * _menuMargin))) / 2.0) -  _menuMargin;
-            
-            if (_startingMenuMargin < 0.0) {
-                _startingMenuMargin = 0.0;
-            }
-            
-            CGFloat selectionIndicatorX = self.menuItemWidth * (CGFloat)_currentPageIndex + self.menuMargin * (CGFloat)(_currentPageIndex + 1) + self.startingMenuMargin;
-            _selectionIndicatorView.frame =  CGRectMake(selectionIndicatorX, self.selectionIndicatorView.frame.origin.y, self.selectionIndicatorView.frame.size.width, self.selectionIndicatorView.frame.size.height);
-            
-            // Recalculate frame for menu items if centered
-            NSInteger index = 0;
-            
-            for (MenuItemView *item in _mutableMenuItems) {
-                if (index == 0) {
-                    item.frame = CGRectMake(_startingMenuMargin + _menuMargin, 0.0, _menuItemWidth, _menuHeight);
-                } else {
-                    item.frame = CGRectMake(_menuItemWidth * (CGFloat)index + _menuMargin * (CGFloat)index + 1.0 + _startingMenuMargin, 0.0, _menuItemWidth, _menuHeight);
-                }
-                
-                index++;
-            }
-        }
         
         for (UIView *view in _controllerScrollView.subviews) {
             view.frame = CGRectMake(self.view.frame.size.width * (CGFloat)(_currentPageIndex), _menuHeight, _controllerScrollView.frame.size.width, self.view.frame.size.height - _menuHeight);
@@ -931,9 +838,142 @@ NSString * const CAPSPageMenuOptionHideTopMenuBar                       = @"hide
     return _mutableMenuItems;
 }
 
-- (NSArray *)menuItemWidths
+- (void) observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context
+
 {
-    return _mutableMenuItemWidths;
+    if ([keyPath isEqualToString:@"contentSize"]) {
+        ;
+    }
+    else if ([keyPath isEqualToString:@"contentOffset"]) {
+        
+        // Timerを落とす
+        if (_scrollTimer != nil) {
+            [_scrollTimer invalidate];
+        }
+        
+        // 該当Tableのタイトルを取得。KEYで利用
+        NSString *title = (__bridge NSString *)context;
+        
+        // 格納していたTableViewの1つ前のオフセット位置を取得
+        NSValue *val = [_lastContentTableViewOffsetY objectForKey:title];
+        CGPoint lastTableViewPoint = [val CGPointValue];
+        CGFloat lastTableViewOffsetY = lastTableViewPoint.y;
+
+        // TableViewのオフセットを取得
+        UITableView* contentTableView = (UITableView*)object;
+        CGFloat offsetY = contentTableView.contentOffset.y; // この値のプラスマイナスで上 or 下のスクロールが分かる
+        NSLog(@"offsetY=%f, lastOffsetY=%f", offsetY, lastTableViewOffsetY);
+        
+        if(_lastFunctionViewOffsetY < _functionViewHeight && offsetY > 0.0 && offsetY > lastTableViewOffsetY){
+            // FunctionViewが見えている状態のTableViewの上スクロール。
+            CGFloat diff = offsetY - lastTableViewOffsetY;
+            if (_lastFunctionViewOffsetY + diff > _functionViewHeight) { // スクロールが早いと余分に上側にズレるため調整
+                diff = _functionViewHeight - _lastFunctionViewOffsetY;   // ちょうどの高さにする
+            }
+            _functionScrollView.contentOffset = CGPointMake(0, _lastFunctionViewOffsetY + diff); // FunctionScrollViewの位置を上側に移動
+            if (offsetY != lastTableViewOffsetY) {
+                contentTableView.contentOffset = CGPointMake(0, lastTableViewOffsetY);               // TableViewの移動位置を戻す(引っ付く感じ)
+            }
+            //contentTableView.contentOffset = CGPointMake(0, 0);                                  // TableViewの移動位置を戻す(引っ付く感じ)
+            if (_lastFunctionViewOffsetY < 0) {
+                // Timerを起動
+                NSTimeInterval timerInterval = (double)0.1f;
+                _scrollTimer = [NSTimer scheduledTimerWithTimeInterval:timerInterval
+                                                                target:self selector:@selector(scrollViewDidEndScrolling) userInfo:nil repeats:NO];
+            }
+            NSLog(@"上 スクロール　lastFunctionOffsetY=%f, offsetY=%f", _lastFunctionViewOffsetY, offsetY);
+
+        }
+        else if(_lastFunctionViewOffsetY >= 0 && offsetY < 0.0){  // ★1 -150
+            // FunctionViewが見えている状態の下スクロールで、まだ引っ張られていない場所
+            CGFloat diff = offsetY - lastTableViewOffsetY;
+            _functionScrollView.contentOffset = CGPointMake(0, _lastFunctionViewOffsetY + diff); // FunctionScrollViewの位置を下側に移動
+            //contentTableView.contentOffset = CGPointMake(0, lastTableViewOffsetY);               // TableViewの移動位置を戻す(引っ付く感じ)
+            contentTableView.contentOffset = CGPointMake(0, 0);                                  // TableViewの移動位置を戻す(引っ付く感じ)
+            NSLog(@"下1スクロール　lastFunctionOffsetY=%f, offsetY=%f", _lastFunctionViewOffsetY, offsetY);
+            
+        }
+        else if(_lastFunctionViewOffsetY > -150.0 && offsetY < 0.0){  // ★1 -150
+            // FunctionViewが見えている状態の下スクロールで、引っ張られている場所
+            CGFloat diff = offsetY - lastTableViewOffsetY;  // 移動量取得
+            _functionScrollView.contentOffset = CGPointMake(0, _lastFunctionViewOffsetY + diff); // FunctionScrollViewの位置を下側に移動
+            contentTableView.contentOffset = CGPointMake(0, 0);                                  // TableViewの移動位置を戻す(引っ付く感じ)
+            // Timerを起動
+            NSTimeInterval timerInterval = (double)0.1f;
+            _scrollTimer = [NSTimer scheduledTimerWithTimeInterval:timerInterval
+                                                            target:self selector:@selector(scrollViewDidEndScrolling) userInfo:nil repeats:NO];
+            NSLog(@"下2スクロール　lastFunctionOffsetY=%f, offsetY=%f", _lastFunctionViewOffsetY, offsetY);
+            
+        }
+        else if(_lastFunctionViewOffsetY > -1000.00 && offsetY < 0.0){
+            // Pull to Refresh起動
+            _functionScrollView.contentOffset = CGPointMake(0, -200); // ★2 -200 (Pull to Refreshのようにみせる)
+            [_refreshControl beginRefreshing];
+            [self pullToRefresh:_refreshControl];
+            contentTableView.contentOffset = CGPointMake(0, 0);            // TableViewの移動位置を戻す(引っ付く感じ)
+            NSLog(@"リフレッシュ 　lastFunctionOffsetY=%f, offsetY=%f", _lastFunctionViewOffsetY, offsetY);
+            
+        }else{
+            NSLog(@"その他　　　　 lastFunctionOffsetY=%f, offsetY=%f", _lastFunctionViewOffsetY, offsetY);
+            
+        }
+        
+        // 各TableViewのオフセット値をDictionaryに保存。
+        val = [NSValue valueWithCGPoint:contentTableView.contentOffset];
+        [_lastContentTableViewOffsetY setObject:val forKey:title];
+
+    }
+}
+
+- (void)pullToRefresh:(UIRefreshControl *)refreshControl
+{
+    if (_didPullToRefresh) {
+        return;
+    }
+    
+    if (_scrollTimer != nil) {
+        [_scrollTimer invalidate];
+    }
+    
+    _didPullToRefresh = YES;
+    
+    refreshControl.attributedTitle = [[NSAttributedString alloc] initWithString:@"Refreshing data..."];
+    
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+        
+        [NSThread sleepForTimeInterval:1];
+        
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+            [formatter setDateFormat:@"MMM d, h:mm a"];
+            NSString *lastUpdate = [NSString stringWithFormat:@"Last updated on %@", [formatter stringFromDate:[NSDate date]]];
+            
+            refreshControl.attributedTitle = [[NSAttributedString alloc] initWithString:lastUpdate];
+            
+            [refreshControl endRefreshing];
+            _didPullToRefresh = NO;
+            NSLog(@"refresh end");
+        });
+    });
+}
+
+- (void)scrollViewDidEndScrolling
+{
+    if (_didPullToRefresh) {
+        return;
+    }
+    
+    NSLog(@"scrollViewDidEndScrolling");
+    [UIView animateWithDuration:0.4f
+                          delay:0.0f
+                        options:UIViewAnimationOptionCurveEaseInOut
+                     animations:^{
+                         // アニメーションをする処理
+                         _functionScrollView.contentOffset = CGPointMake(0, 0);
+                     } completion:^(BOOL finished) {
+                         // アニメーションが終わった後実行する処理
+                     }];
+
 }
 
 @end
